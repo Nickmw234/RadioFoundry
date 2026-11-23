@@ -6,6 +6,13 @@ static bool cap_lsn_to_chan(const t3_ms_t *ms, uint8_t lsn, t3_chan_t *chan, uin
     uint16_t lcn_num = (uint16_t)(((lsn - 1u) / 2u) + 1u);
     *slot = (uint8_t)(((lsn - 1u) % 2u) + 1u);
 
+    for (uint8_t i = 0; i < ms->cfg->nctrl; i++) {
+        if (ms->cfg->ctrl[i].lcn == lcn_num && ms->cfg->ctrl[i].rx_hz != 0) {
+            *chan = ms->cfg->ctrl[i];
+            return true;
+        }
+    }
+
     for (uint16_t i = 0; i < ms->cfg->plan.ntable; i++) {
         if (ms->cfg->plan.table[i].lcn == lcn_num && ms->cfg->plan.table[i].rx_hz != 0) {
             *chan = ms->cfg->plan.table[i];
@@ -13,9 +20,9 @@ static bool cap_lsn_to_chan(const t3_ms_t *ms, uint8_t lsn, t3_chan_t *chan, uin
         }
     }
 
-    uint8_t ctrl_idx = (uint8_t)(lcn_num - 1u);
-    if (ctrl_idx < ms->cfg->nctrl && ms->cfg->ctrl[ctrl_idx].rx_hz != 0) {
-        *chan = ms->cfg->ctrl[ctrl_idx];
+    uint8_t idx = (uint8_t)(lcn_num - 1u);
+    if (idx < ms->cfg->nctrl && ms->cfg->ctrl[idx].rx_hz != 0) {
+        *chan = ms->cfg->ctrl[idx];
         return true;
     }
 
@@ -93,10 +100,10 @@ bool cap_plus_rx_csbk(t3_ms_t *ms, uint32_t now, uint8_t slot, uint8_t cc,
     if (cap_lsn_to_chan(ms, rest_lsn, &rest_chan, &rest_slot)) {
         bool moved = (!ms->confirmed ||
                       ms->tscc.rx_hz != rest_chan.rx_hz ||
-                      ms->tscc_slots != (uint8_t)(1u << (rest_slot - 1u)));
+                      ms->tscc_slots != 0x3u);
         ms->confirmed = true;
         ms->tscc = rest_chan;
-        ms->tscc_slots = (uint8_t)(1u << (rest_slot - 1u));
+        ms->tscc_slots = 0x3u;
 
         if (ms->state == T3_HUNT) {
             ms->state = T3_CAMPED;
@@ -143,10 +150,10 @@ bool cap_plus_rx_slc(t3_ms_t *ms, uint32_t now, uint32_t slc) {
         ms->last_valid_ms = now;
         bool moved = (!ms->confirmed ||
                       ms->tscc.rx_hz != rest_chan.rx_hz ||
-                      ms->tscc_slots != (uint8_t)(1u << (rest_slot - 1u)));
+                      ms->tscc_slots != 0x3u);
         ms->confirmed = true;
         ms->tscc = rest_chan;
-        ms->tscc_slots = (uint8_t)(1u << (rest_slot - 1u));
+        ms->tscc_slots = 0x3u;
 
         if (ms->state == T3_HUNT) {
             ms->state = T3_CAMPED;
