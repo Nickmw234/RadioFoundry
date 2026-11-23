@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: MIT
 #include "dmr/trunk/cap_plus.h"
 
-/* Map a 1-based Cap+ LSN (1..16) to a programmed channel and TDMA slot (1 or 2).
- * Checks the Tier III Channel Plan Table first (LCN 1..8, for 5-8 repeater sites),
- * then falls back to the Control Channels list (LCN 1..4). */
 static bool cap_lsn_to_chan(const t3_ms_t *ms, uint8_t lsn, t3_chan_t *chan, uint8_t *slot) {
     if (!ms->cfg || lsn == 0 || lsn > 16u) return false;
-    uint16_t lcn_num = (uint16_t)(((lsn - 1u) / 2u) + 1u); /* LSN 1,2 -> LCN 1 .. LSN 15,16 -> LCN 8 */
-    *slot = (uint8_t)(((lsn - 1u) % 2u) + 1u);             /* Odd LSN -> Slot 1, Even LSN -> Slot 2 */
+    uint16_t lcn_num = (uint16_t)(((lsn - 1u) / 2u) + 1u);
+    *slot = (uint8_t)(((lsn - 1u) % 2u) + 1u);
 
-    /* 1. Look up LCN 1..8 in the Channel Plan Table */
     for (uint16_t i = 0; i < ms->cfg->plan.ntable; i++) {
         if (ms->cfg->plan.table[i].lcn == lcn_num && ms->cfg->plan.table[i].rx_hz != 0) {
             *chan = ms->cfg->plan.table[i];
@@ -17,7 +13,6 @@ static bool cap_lsn_to_chan(const t3_ms_t *ms, uint8_t lsn, t3_chan_t *chan, uin
         }
     }
 
-    /* 2. Fallback to the Control Channels list (LCN 1..4) */
     uint8_t ctrl_idx = (uint8_t)(lcn_num - 1u);
     if (ctrl_idx < ms->cfg->nctrl && ms->cfg->ctrl[ctrl_idx].rx_hz != 0) {
         *chan = ms->cfg->ctrl[ctrl_idx];
@@ -25,6 +20,13 @@ static bool cap_lsn_to_chan(const t3_ms_t *ms, uint8_t lsn, t3_chan_t *chan, uin
     }
 
     return false;
+}
+
+static void cap_force_listen_only(t3_ms_t *ms) {
+    ms->reg = T3_REG_LISTEN;
+    ms->ax.state = T3_AX_IDLE;
+    ms->ax.retry_ms = 0;
+    ms->massreg = false;
 }
 
 static void cap_queue_tune(t3_ms_t *ms, t3_chan_t chan, uint8_t slot, bool payload) {
@@ -76,13 +78,14 @@ bool cap_plus_rx_csbk(t3_ms_t *ms, uint32_t now, uint8_t slot, uint8_t cc,
     (void)cc;
     if (!cap_plus_is_csbk(d)) return false;
 
+    cap_force_listen_only(ms);
     ms->st.csbk++;
     ms->last_valid_ms = now;
 
-    uint8_t rest_lsn = d[2] & 0x1Fu; /* Covers LSN 1..16 */
-    uint8_t ch_mask1 = d[3];         /* Bit 7 = LSN 1 .. Bit 0 = LSN 8 */
+    uint8_t rest_lsn = d[2] & 0x1Fu;
+    uint8_t ch_mask1 = d[3];
     bool    has_ext  = (ms->cfg && ms->cfg->plan.ntable > 4u) || ((d[2] & 0x20u) != 0);
-    uint8_t ch_mask2 = has_ext ? d[4] : 0u; /* Bit 7 = LSN 9 .. Bit 0 = LSN 16 */
+    uint8_t ch_mask2 = has_ext ? d[4] : 0u;
     uint8_t tg_idx   = has_ext ? 5u : 4u;
 
     t3_chan_t rest_chan;
@@ -103,7 +106,6 @@ bool cap_plus_rx_csbk(t3_ms_t *ms, uint32_t now, uint8_t slot, uint8_t cc,
         }
     }
 
-    /* If camped on Rest Channel, check active Group Calls across LSN 1..8 then LSN 9..16 */
     if (ms->state == T3_CAMPED) {
         for (uint8_t bit = 0; bit < 8u && tg_idx < 10u; bit++) {
             if (ch_mask1 & (0x80u >> bit)) {
@@ -129,11 +131,11 @@ bool cap_plus_rx_csbk(t3_ms_t *ms, uint32_t now, uint8_t slot, uint8_t cc,
 }
 
 bool cap_plus_rx_slc(t3_ms_t *ms, uint32_t now, uint32_t slc) {
-    /* 32-bit Short LC: [31:28]=SLCO, [27:20]=MFID, [19:18]=op, [12:8]=Rest LSN */
     uint8_t slco = (uint8_t)((slc >> 28) & 0x0Fu);
     uint8_t mfid = (uint8_t)((slc >> 20) & 0xFFu);
     if (slco != CAP_SLCO_REST || mfid != CAP_FID_MOTOROLA) return false;
 
+    cap_force_listen_only(ms);
     uint8_t rest_lsn = (uint8_t)((slc >> 8) & 0x1Fu);
     t3_chan_t rest_chan;
     uint8_t rest_slot = 1;
