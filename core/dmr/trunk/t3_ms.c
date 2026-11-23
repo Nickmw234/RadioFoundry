@@ -187,7 +187,8 @@ static bool chan_lookup(const t3_ms_t *ms, uint16_t lcn, t3_chan_t *out)
 // The adjacent sites' TSCCs come first (6.7.1.7: they are the likelier to serve), then the programmed ones
 static uint8_t hunt_count(const t3_ms_t *ms)
 {
-	return (uint8_t)(ms->nadj + ms->cfg->nctrl);
+	uint8_t nplan = ms->cfg->plan.ntable > 8u ? 8u : (uint8_t)ms->cfg->plan.ntable;
+	return (uint8_t)(ms->nadj + ms->cfg->nctrl + nplan);
 }
 
 static bool hunt_candidate(const t3_ms_t *ms, uint8_t i, t3_chan_t *out)
@@ -201,6 +202,20 @@ static bool hunt_candidate(const t3_ms_t *ms, uint8_t i, t3_chan_t *out)
 	if (i < c->nctrl) {
 		*out = c->ctrl[i];
 		return out->rx_hz != 0;
+	}
+	i = (uint8_t)(i - c->nctrl);
+	if (i < c->plan.ntable && i < 8u) {
+		*out = c->plan.table[i];
+		if (out->rx_hz == 0) {
+			return false;
+		}
+		// Skip frequencies already in ctrl[] so the hunt does not dwell on them twice
+		for (uint8_t j = 0; j < c->nctrl; j++) {
+			if (c->ctrl[j].rx_hz == out->rx_hz) {
+				return false;
+			}
+		}
+		return true;
 	}
 	return false;
 }
