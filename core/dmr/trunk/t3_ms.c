@@ -4,6 +4,7 @@
 #include <string.h>
 #include "config.h"
 #include "dmr/trunk/t3_ms.h"
+#include "dmr/trunk/cap_plus.h"
 
 static bool since(uint32_t now, uint32_t t, uint32_t ms)
 {
@@ -2473,6 +2474,9 @@ void t3_ms_rx(t3_ms_t *ms, uint32_t now, uint8_t slot, uint8_t dt, uint8_t cc, c
 		deliver(ms, now, slot, cc, &ms->mbc[si].hdr, &c);
 		return;
 	}
+	if (dt == T3_DT_CSBK && cap_plus_rx_csbk(ms, now, slot, cc, d)) {
+		return;
+	}
 	ms->st.csbk += good;
 	bool known = t3_csbk_parse(d, &p);
 	if (ms->state == T3_FOLLOW && slot == ms->call.slot) {
@@ -2500,8 +2504,13 @@ void t3_ms_rx(t3_ms_t *ms, uint32_t now, uint8_t slot, uint8_t dt, uint8_t cc, c
 void t3_ms_slc(t3_ms_t *ms, uint32_t now, uint32_t slc)
 {
 	t3_sysparms_t sp;
-	if (ms->state == T3_OFF || ms->state == T3_FOLLOW || !since(now, ms->tuned_ms, T3_SETTLE_MS) ||
-	    !t3_sysparms_parse(slc, &sp)) {
+	if (ms->state == T3_OFF || !since(now, ms->tuned_ms, T3_SETTLE_MS)) {
+		return;
+	}
+	if (cap_plus_rx_slc(ms, now, slc)) {
+		return;
+	}
+	if (ms->state == T3_FOLLOW || !t3_sysparms_parse(slc, &sp)) {
 		return;
 	}
 	if (!sp.control) {
