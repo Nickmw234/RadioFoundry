@@ -1,14 +1,30 @@
 // SPDX-License-Identifier: MIT
 #include "dmr/trunk/cap_plus.h"
 
-/* Map a 1-based Cap+ LSN (1..16) to a programmed channel index and TDMA slot (1 or 2) */
+/* Map a 1-based Cap+ LSN (1..16) to a programmed channel and TDMA slot (1 or 2).
+ * Checks the Tier III Channel Plan Table first (LCN 1..8, for 5-8 repeater sites),
+ * then falls back to the Control Channels list (LCN 1..4). */
 static bool cap_lsn_to_chan(const t3_ms_t *ms, uint8_t lsn, t3_chan_t *chan, uint8_t *slot) {
-    if (!ms->cfg || lsn == 0) return false;
-    uint8_t lcn_idx = (uint8_t)((lsn - 1u) / 2u);
-    if (lcn_idx >= ms->cfg->nctrl) return false;
-    *chan = ms->cfg->ctrl[lcn_idx];
-    *slot = (uint8_t)(((lsn - 1u) % 2u) + 1u);
-    return true;
+    if (!ms->cfg || lsn == 0 || lsn > 16u) return false;
+    uint16_t lcn_num = (uint16_t)(((lsn - 1u) / 2u) + 1u); /* LSN 1,2 -> LCN 1 .. LSN 11,12 -> LCN 6 */
+    *slot = (uint8_t)(((lsn - 1u) % 2u) + 1u);             /* Odd LSN -> Slot 1, Even LSN -> Slot 2 */
+
+    /* 1. Look up LCN 1..8 in the Channel Plan Table */
+    for (uint16_t i = 0; i < ms->cfg->plan.ntable; i++) {
+        if (ms->cfg->plan.table[i].lcn == lcn_num && ms->cfg->plan.table[i].rx_hz != 0) {
+            *chan = ms->cfg->plan.table[i];
+            return true;
+        }
+    }
+
+    /* 2. Fallback to the Control Channels list (LCN 1..4) */
+    uint8_t ctrl_idx = (uint8_t)(lcn_num - 1u);
+    if (ctrl_idx < ms->cfg->nctrl && ms->cfg->ctrl[ctrl_idx].rx_hz != 0) {
+        *chan = ms->cfg->ctrl[ctrl_idx];
+        return true;
+    }
+
+    return false;
 }
 
 static void cap_queue_tune(t3_ms_t *ms, t3_chan_t chan, uint8_t slot, bool payload) {
@@ -38,8 +54,8 @@ bool cap_plus_rx_csbk(t3_ms_t *ms, uint32_t now, uint8_t slot, uint8_t cc,
     ms->st.csbk++;
     ms->last_valid_ms = now;
 
-    uint8_t rest_lsn = d[2] & 0x0Fu;
-    uint8_t ch_mask  = d[3]; /* Bit 7 = LSN 1 .. Bit 0 = LSN 8 */
+    uint8_t rest_lsn = d[2] & 0x0Fu; /* Covers LSN 1..15 (up to 7+ repeaters) */
+    uint8_t ch_mask  = d[3];         /* Bit 7 = LSN 1 .. Bit 0 = LSN 8 */
 
     t3_chan_t rest_chan;
     uint8_t rest_slot = 1;
