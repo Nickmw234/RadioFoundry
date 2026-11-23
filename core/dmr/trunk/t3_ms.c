@@ -2470,6 +2470,9 @@ void t3_ms_rx(t3_ms_t *ms, uint32_t now, uint8_t slot, uint8_t dt, uint8_t cc, c
 			return;
 		}
 	}
+	if ((dt == T3_DT_CSBK || dt == T3_DT_MBC_HDR) && cap_plus_rx_csbk(ms, now, slot, cc, d)) {
+		return;
+	}
 	// A continuation carries the whole MBC's CRC, with no mask
 	bool good = t3_crc_ok(d, dt == T3_DT_CSBK ? T3_CRC_MASK_CSBK : cont ? 0 : T3_CRC_MASK_MBC_HDR);
 	if (!good && !((ms->cfg->opts & T3_OPT_ACCEPT_BAD_CRC) && rx_seen(&ms->seen, d, T3_CSBK_BYTES))) {
@@ -2487,9 +2490,6 @@ void t3_ms_rx(t3_ms_t *ms, uint32_t now, uint8_t slot, uint8_t dt, uint8_t cc, c
 			return;
 		}
 		deliver(ms, now, slot, cc, &ms->mbc[si].hdr, &c);
-		return;
-	}
-	if (dt == T3_DT_CSBK && cap_plus_rx_csbk(ms, now, slot, cc, d)) {
 		return;
 	}
 	ms->st.csbk += good;
