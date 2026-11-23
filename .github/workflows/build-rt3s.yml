@@ -1,0 +1,28 @@
+name: Build Retevis RT3S
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ARM toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi binutils-arm-none-eabi python3 make
+
+      - name: Build RT3S firmware
+        run: make BOARD=mduv380 CONFIG_DMR_TRUNK=y
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: radiofoundry-rt3s
+          path: |
+            build/*/rfoundry_*.bin
+            build/*/rfoundry_*.elf
