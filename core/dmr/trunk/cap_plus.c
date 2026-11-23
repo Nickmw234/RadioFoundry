@@ -6,7 +6,7 @@
  * then falls back to the Control Channels list (LCN 1..4). */
 static bool cap_lsn_to_chan(const t3_ms_t *ms, uint8_t lsn, t3_chan_t *chan, uint8_t *slot) {
     if (!ms->cfg || lsn == 0 || lsn > 16u) return false;
-    uint16_t lcn_num = (uint16_t)(((lsn - 1u) / 2u) + 1u); /* LSN 1,2 -> LCN 1 .. LSN 11,12 -> LCN 6 */
+    uint16_t lcn_num = (uint16_t)(((lsn - 1u) / 2u) + 1u); /* LSN 1,2 -> LCN 1 .. LSN 15,16 -> LCN 8 */
     *slot = (uint8_t)(((lsn - 1u) % 2u) + 1u);             /* Odd LSN -> Slot 1, Even LSN -> Slot 2 */
 
     /* 1. Look up LCN 1..8 in the Channel Plan Table */
@@ -39,6 +39,31 @@ static void cap_queue_tune(t3_ms_t *ms, t3_chan_t chan, uint8_t slot, bool paylo
     a->blocks = 0;
 }
 
+static bool cap_try_follow(t3_ms_t *ms, uint32_t now, uint8_t lsn, uint8_t rest_lsn, uint32_t tg) {
+    if (lsn == rest_lsn || !t3_ms_wants_group(ms, tg, false)) return false;
+
+    t3_chan_t vchan;
+    uint8_t vslot = 1;
+    if (!cap_lsn_to_chan(ms, lsn, &vchan, &vslot)) return false;
+
+    ms->st.grants++;
+    ms->st.followed++;
+    ms->state = T3_FOLLOW;
+    ms->last_act_ms = now;
+    ms->call.op = CAP_CSBKO_STATUS;
+    ms->call.dst = tg;
+    ms->call.src = 0;
+    ms->call.group = true;
+    ms->call.emergency = false;
+    ms->call.chan = vchan;
+    ms->call.slot = vslot;
+    ms->call.start_ms = now;
+    ms->call.ours = false;
+    ms->call.data = false;
+    cap_queue_tune(ms, vchan, vslot, true);
+    return true;
+}
+
 bool cap_plus_is_csbk(const uint8_t d[T3_CSBK_BYTES]) {
     uint8_t csbko = d[0] & 0x3Fu;
     uint8_t fid   = d[1];
@@ -54,8 +79,11 @@ bool cap_plus_rx_csbk(t3_ms_t *ms, uint32_t now, uint8_t slot, uint8_t cc,
     ms->st.csbk++;
     ms->last_valid_ms = now;
 
-    uint8_t rest_lsn = d[2] & 0x0Fu; /* Covers LSN 1..15 (up to 7+ repeaters) */
-    uint8_t ch_mask  = d[3];         /* Bit 7 = LSN 1 .. Bit 0 = LSN 8 */
+    uint8_t rest_lsn = d[2] & 0x1Fu; /* Covers LSN 1..16 */
+    uint8_t ch_mask1 = d[3];         /* Bit 7 = LSN 1 .. Bit 0 = LSN 8 */
+    bool    has_ext  = (ms->cfg && ms->cfg->plan.ntable > 4u) || ((d[2] & 0x20u) != 0);
+    uint8_t ch_mask2 = has_ext ? d[4] : 0u; /* Bit 7 = LSN 9 .. Bit 0 = LSN 16 */
+    uint8_t tg_idx   = has_ext ? 5u : 4u;
 
     t3_chan_t rest_chan;
     uint8_t rest_slot = 1;
@@ -75,34 +103,23 @@ bool cap_plus_rx_csbk(t3_ms_t *ms, uint32_t now, uint8_t slot, uint8_t cc,
         }
     }
 
-    /* If camped on Rest Channel, check active Group Calls in ch_mask */
-    if (ms->state == T3_CAMPED && ch_mask != 0) {
-        uint8_t tg_idx = 4;
-        for (uint8_t bit = 0; bit < 8 && tg_idx < 10; bit++) {
-            if (ch_mask & (0x80u >> bit)) {
+    /* If camped on Rest Channel, check active Group Calls across LSN 1..8 then LSN 9..16 */
+    if (ms->state == T3_CAMPED) {
+        for (uint8_t bit = 0; bit < 8u && tg_idx < 10u; bit++) {
+            if (ch_mask1 & (0x80u >> bit)) {
                 uint8_t lsn = (uint8_t)(bit + 1u);
                 uint32_t tg = d[tg_idx++];
-                if (lsn != rest_lsn && t3_ms_wants_group(ms, tg, false)) {
-                    t3_chan_t vchan;
-                    uint8_t vslot = 1;
-                    if (cap_lsn_to_chan(ms, lsn, &vchan, &vslot)) {
-                        ms->st.grants++;
-                        ms->st.followed++;
-                        ms->state = T3_FOLLOW;
-                        ms->last_act_ms = now;
-                        ms->call.op = CAP_CSBKO_STATUS;
-                        ms->call.dst = tg;
-                        ms->call.src = 0;
-                        ms->call.group = true;
-                        ms->call.emergency = false;
-                        ms->call.chan = vchan;
-                        ms->call.slot = vslot;
-                        ms->call.start_ms = now;
-                        ms->call.ours = false;
-                        ms->call.data = false;
-                        cap_queue_tune(ms, vchan, vslot, true);
-                        return true;
-                    }
+                if (cap_try_follow(ms, now, lsn, rest_lsn, tg)) {
+                    return true;
+                }
+            }
+        }
+        for (uint8_t bit = 0; bit < 8u && tg_idx < 10u; bit++) {
+            if (ch_mask2 & (0x80u >> bit)) {
+                uint8_t lsn = (uint8_t)(bit + 9u);
+                uint32_t tg = d[tg_idx++];
+                if (cap_try_follow(ms, now, lsn, rest_lsn, tg)) {
+                    return true;
                 }
             }
         }
