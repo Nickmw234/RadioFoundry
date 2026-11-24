@@ -2444,6 +2444,9 @@ void t3_ms_rx(t3_ms_t *ms, uint32_t now, uint8_t slot, uint8_t dt, uint8_t cc, c
 	t3_csbk_t p;
 	bool cont = dt == T3_DT_MBC_CONT;
 	if (cont) {
+		if (cap_plus_rx_mbc_cont(ms, now, slot, cc, d)) {
+			return;
+		}
 		bool have = ms->mbc[si].open && !since(now, ms->mbc[si].ms, MBC_GAP_MS);
 		ms->mbc[si].open = false;
 		if (!have) {
@@ -2639,6 +2642,10 @@ void t3_ms_activity(t3_ms_t *ms, uint32_t now, uint8_t slot)
 // they alone say so
 void t3_ms_call_burst(t3_ms_t *ms, uint32_t now, uint8_t slot, uint8_t cc)
 {
+	if (ms->state == T3_CAMPED && cc_ok(ms, cc) && since(now, ms->tuned_ms, 20u) &&
+	    cap_plus_on_call_burst(ms, now, slot, cc)) {
+		return;
+	}
 	if (ms->state != T3_CAMPED || ms->vote.on || !ms->confirmed || ms->slc_here || slot < 1 || slot > 2 ||
 	    !(ms->tscc_slots & (1u << (slot - 1u))) || !cc_ok(ms, cc) || !since(now, ms->tuned_ms, T3_SETTLE_MS)) {
 		return;
