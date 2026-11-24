@@ -197,7 +197,6 @@ bool cap_plus_rx_slc(t3_ms_t *ms, uint32_t now, uint32_t slc) {
 bool cap_plus_on_call_burst(t3_ms_t *ms, uint32_t now, uint8_t slot, uint8_t cc) {
     (void)cc;
     if (ms->state != T3_CAMPED || !ms->confirmed || ms->tscc_slots != 0x3u) return false;
-    if (!(ms->cfg->opts & T3_OPT_MONITOR)) return false;
     if (slot < 1u || slot > 2u) return false;
 
     ms->st.grants++;
